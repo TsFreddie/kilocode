@@ -7,6 +7,7 @@ export interface RooTerminal {
 	id: number
 	busy: boolean
 	running: boolean
+	killRequested: boolean
 	taskId?: string
 	process?: RooTerminalProcess
 	getCurrentWorkingDirectory(): string

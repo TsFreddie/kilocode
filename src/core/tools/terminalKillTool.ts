@@ -61,6 +61,8 @@ async function killTerminalProcess(terminalId: number): Promise<string> {
 	}
 
 	try {
+		targetTerminal.killRequested = true
+
 		if (targetTerminal instanceof Terminal) {
 			// For VSCode terminals, send Ctrl+C
 			targetTerminal.terminal.sendText("\x03")
@@ -75,6 +77,7 @@ async function killTerminalProcess(terminalId: number): Promise<string> {
 			}
 		}
 	} catch (error) {
+		targetTerminal.killRequested = false
 		throw new Error(
 			`Failed to kill process in terminal ${terminalId}: ${error instanceof Error ? error.message : String(error)}`,
 		)
