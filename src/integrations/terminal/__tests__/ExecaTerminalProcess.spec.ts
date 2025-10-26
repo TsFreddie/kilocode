@@ -2,19 +2,47 @@
 
 const mockPid = 12345
 
+// Simple mock that avoids complex Promise prototype manipulation
+let mockSubprocess: any
+let mockExitCode = 0
+let mockStreamData = ["test output\n"]
+
 vitest.mock("execa", () => {
 	const mockKill = vitest.fn()
 	const execa = vitest.fn((options: any) => {
-		return (_template: TemplateStringsArray, ...args: any[]) => ({
-			pid: mockPid,
-			iterable: (_opts: any) =>
-				(async function* () {
-					yield "test output\n"
-				})(),
-			kill: mockKill,
-		})
+		return (_template: TemplateStringsArray, ...args: any[]) => {
+			mockSubprocess = {
+				pid: mockPid,
+				kill: mockKill,
+				iterable: (_opts: any) =>
+					(async function* () {
+						for (const data of mockStreamData) {
+							yield data
+						}
+					})(),
+				then: vitest.fn((onResolve) => {
+					setTimeout(() => onResolve({ exitCode: mockExitCode }), 10)
+					return Promise.resolve({ exitCode: mockExitCode })
+				}),
+				catch: vitest.fn((onReject) => {
+					return Promise.resolve({ exitCode: mockExitCode })
+				}),
+			}
+			return mockSubprocess
+		}
 	})
-	return { execa, ExecaError: class extends Error {} }
+	return {
+		execa,
+		ExecaError: class extends Error {
+			exitCode?: number
+			signal?: string
+			constructor(message: string, exitCode?: number, signal?: string) {
+				super(message)
+				this.exitCode = exitCode
+				this.signal = signal
+			}
+		},
+	}
 })
 
 vitest.mock("ps-tree", () => ({
@@ -48,6 +76,11 @@ describe("ExecaTerminalProcess", () => {
 			cleanCompletedProcessQueue: vitest.fn(),
 		} as unknown as RooTerminal
 		terminalProcess = new ExecaTerminalProcess(mockTerminal)
+
+		// Reset mock state
+		mockExitCode = 0
+		mockStreamData = ["test output\n"]
+		vitest.clearAllMocks()
 	})
 
 	afterEach(() => {
@@ -55,8 +88,8 @@ describe("ExecaTerminalProcess", () => {
 		vitest.clearAllMocks()
 	})
 
-	describe("UTF-8 encoding fix", () => {
-		it("should set LANG and LC_ALL to en_US.UTF-8", async () => {
+	describe("UTF-8 encoding and detached process options", () => {
+		it("should set LANG and LC_ALL to en_US.UTF-8 with detached options", async () => {
 			await terminalProcess.run("echo test")
 			const execaMock = vitest.mocked(execa)
 			expect(execaMock).toHaveBeenCalledWith(
@@ -64,6 +97,9 @@ describe("ExecaTerminalProcess", () => {
 					shell: true,
 					cwd: "/test/cwd",
 					all: true,
+					detached: true, // Should be detached for background execution
+					cleanup: true, // Should auto-cleanup on exit
+					stdin: "ignore",
 					env: expect.objectContaining({
 						LANG: "en_US.UTF-8",
 						LC_ALL: "en_US.UTF-8",
@@ -93,35 +129,40 @@ describe("ExecaTerminalProcess", () => {
 		})
 	})
 
-	describe("basic functionality", () => {
+	describe("basic functionality and background execution", () => {
 		it("should create instance with terminal reference", () => {
 			expect(terminalProcess).toBeInstanceOf(ExecaTerminalProcess)
 			expect(terminalProcess.terminal).toBe(mockTerminal)
 		})
 
-		it("should emit shell_execution_complete with exitCode 0", async () => {
-			const spy = vitest.fn()
-			terminalProcess.on("shell_execution_complete", spy)
+		it("should emit shell_execution_started and continue immediately", async () => {
+			const startSpy = vitest.fn()
+			const continueSpy = vitest.fn()
+			terminalProcess.on("shell_execution_started", startSpy)
+			terminalProcess.on("continue", continueSpy)
+
 			await terminalProcess.run("echo test")
-			expect(spy).toHaveBeenCalledWith({ exitCode: 0 })
+
+			expect(startSpy).toHaveBeenCalledWith(mockPid)
+			expect(continueSpy).toHaveBeenCalled()
 		})
 
-		it("should emit completed event with full output", async () => {
-			const spy = vitest.fn()
-			terminalProcess.on("completed", spy)
-			await terminalProcess.run("echo test")
-			expect(spy).toHaveBeenCalledWith("test output\n")
-		})
-
-		it("should set and clear active stream", async () => {
+		it("should start background stream monitoring", async () => {
 			await terminalProcess.run("echo test")
 			expect(mockTerminal.setActiveStream).toHaveBeenCalledWith(expect.any(Object), mockPid)
-			expect(mockTerminal.setActiveStream).toHaveBeenLastCalledWith(undefined)
+		})
+
+		it("should complete run() immediately without waiting for subprocess", async () => {
+			const startTime = Date.now()
+			await terminalProcess.run("sleep 1") // Would normally take 1 second
+			const elapsed = Date.now() - startTime
+
+			// Should complete almost immediately (< 100ms) since it's non-blocking
+			expect(elapsed).toBeLessThan(100)
 		})
 	})
 
-	// kilocode_change start: Test background execution behavior
-	describe("background execution (continue)", () => {
+	describe("continue() behavior", () => {
 		it("should stop emitting line events when continue() is called", () => {
 			const lineSpy = vitest.fn()
 			terminalProcess.on("line", lineSpy)
@@ -156,58 +197,121 @@ describe("ExecaTerminalProcess", () => {
 			// Should have emitted the remaining output
 			expect(lineSpy).toHaveBeenCalledWith("some output\n")
 		})
+	})
 
-		it("should respect isListening flag during output processing", async () => {
-			// Create a mock that yields multiple lines
-			const mockIterator = async function* () {
-				yield "line 1\n"
-				yield "line 2\n"
-				yield "line 3\n"
-			}
+	describe("background stream monitoring", () => {
+		it("should emit shell_execution_complete when background subprocess finishes", async () => {
+			const completeSpy = vitest.fn()
+			terminalProcess.on("shell_execution_complete", completeSpy)
 
-			// Temporarily override the mock for this test only
-			const execaMock = vitest.mocked(execa)
-			const originalImplementation = execaMock.getMockImplementation()
+			// Set custom exit code
+			mockExitCode = 42
 
-			execaMock.mockImplementation(((options: any) => {
-				return (_template: TemplateStringsArray, ...args: any[]) => ({
-					pid: mockPid,
-					iterable: (_opts: any) => mockIterator(),
-					kill: vitest.fn(),
-				})
-			}) as any)
+			await terminalProcess.run("test command")
 
-			const lineSpy = vitest.fn()
-			terminalProcess.on("line", lineSpy)
+			// Wait for background completion
+			await new Promise((resolve) => setTimeout(resolve, 50))
 
-			// Start the process but immediately call continue to stop listening
-			const runPromise = terminalProcess.run("echo test")
+			expect(completeSpy).toHaveBeenCalledWith({ exitCode: 42 })
+		})
 
-			// Allow a tiny delay for the async iterator to start
-			await new Promise((resolve) => setTimeout(resolve, 1))
-			terminalProcess.continue()
+		it("should emit completed event when background monitoring finishes", async () => {
+			const completedSpy = vitest.fn()
+			terminalProcess.on("completed", completedSpy)
 
-			await runPromise
+			await terminalProcess.run("echo test")
 
-			// Should have emitted some line events but not all possible content
-			// (the continue() call should have stopped further processing)
-			expect(lineSpy).toHaveBeenCalled()
+			// Wait for background completion
+			await new Promise((resolve) => setTimeout(resolve, 50))
 
-			// Verify that the emitted content contains expected line data
-			const calls = lineSpy.mock.calls
-			expect(calls.length).toBeGreaterThan(0)
-			expect(calls.length).toBeLessThanOrEqual(3) // Should not emit more than our 3 mock lines
+			expect(completedSpy).toHaveBeenCalledWith("test output\n")
+		})
 
-			// Each call should contain line content
-			for (const call of calls) {
-				expect(call[0]).toMatch(/line \d+/)
-			}
+		it("should collect output during background monitoring", async () => {
+			mockStreamData = ["line 1\n", "line 2\n", "line 3\n"]
 
-			// Restore the original mock implementation
-			if (originalImplementation) {
-				execaMock.mockImplementation(originalImplementation)
-			}
+			await terminalProcess.run("multi-line command")
+
+			// Wait for stream processing
+			await new Promise((resolve) => setTimeout(resolve, 50))
+
+			// Verify output was collected
+			expect(terminalProcess["fullOutput"]).toBe("line 1\nline 2\nline 3\n")
+		})
+
+		it("should handle background subprocess errors properly", async () => {
+			const completeSpy = vitest.fn()
+			terminalProcess.on("shell_execution_complete", completeSpy)
+
+			// Set up error scenario by manipulating the mock's behavior
+			mockExitCode = 1
+			mockStreamData = ["error output\n"]
+
+			await terminalProcess.run("failing command")
+
+			// Wait for background processing
+			await new Promise((resolve) => setTimeout(resolve, 50))
+
+			// Should still emit completion event even for errors
+			expect(completeSpy).toHaveBeenCalledWith({ exitCode: 1 })
 		})
 	})
-	// kilocode_change end
+
+	describe("process cleanup", () => {
+		it("should perform final cleanup when background monitoring completes", async () => {
+			const completedSpy = vitest.fn()
+			terminalProcess.on("completed", completedSpy)
+
+			await terminalProcess.run("echo test")
+
+			// Wait for background completion
+			await new Promise((resolve) => setTimeout(resolve, 50))
+
+			// Verify final cleanup was called
+			expect(mockTerminal.setActiveStream).toHaveBeenLastCalledWith(undefined)
+			expect(completedSpy).toHaveBeenCalled()
+		})
+
+		it("should handle abort during background monitoring", async () => {
+			// Test that abort functionality works by checking the aborted flag
+			await terminalProcess.run("long command")
+
+			// Allow background monitoring to start
+			await new Promise((resolve) => setTimeout(resolve, 10))
+
+			// Abort the process
+			terminalProcess.abort()
+
+			// Verify that the aborted flag was set
+			expect(terminalProcess["aborted"]).toBe(true)
+
+			// Verify cleanup was called
+			expect(mockTerminal.setActiveStream).toHaveBeenLastCalledWith(undefined)
+		})
+	})
+
+	describe("output retrieval", () => {
+		it("should track unretrieved output correctly", () => {
+			terminalProcess["fullOutput"] = "line 1\nline 2\nline 3\n"
+			terminalProcess["lastRetrievedIndex"] = 0
+
+			expect(terminalProcess.hasUnretrievedOutput()).toBe(true)
+
+			const output = terminalProcess.getUnretrievedOutput()
+			expect(output).toBe("line 1\nline 2\nline 3\n")
+
+			expect(terminalProcess.hasUnretrievedOutput()).toBe(false)
+		})
+
+		it("should handle partial output retrieval", () => {
+			terminalProcess["fullOutput"] = "line 1\nline 2\npartial"
+			terminalProcess["lastRetrievedIndex"] = 0
+
+			const output = terminalProcess.getUnretrievedOutput()
+			expect(output).toBe("line 1\nline 2\n")
+
+			// Partial line should remain unretrieved
+			expect(terminalProcess.hasUnretrievedOutput()).toBe(true)
+		})
+	})
 })

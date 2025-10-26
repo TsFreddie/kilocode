@@ -220,10 +220,14 @@ export async function executeCommand(
 				terminalOutputCharacterLimit,
 			)
 
-			task.say("command_output", result)
+			// kilocode_change start: Don't wake agent if running in background
+			if (!runInBackground) {
+				task.say("command_output", result)
+			}
+			// kilocode_change end: Don't wake agent if running in background
 			completed = true
 		},
-		onShellExecutionStarted: (pid: number | undefined) => {
+		onShellExecutionStarted: (pid: number | undefined, process: RooTerminalProcess) => {
 			console.log(`[executeCommand] onShellExecutionStarted: ${pid}`)
 			const status: CommandExecutionStatus = { executionId, status: "started", pid, command }
 			provider?.postMessageToWebview({ type: "commandExecutionStatus", text: JSON.stringify(status) })
