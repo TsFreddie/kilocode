@@ -1,6 +1,11 @@
 // kilocode_change - new file: Terminal control tool prompt description
 import { ToolArgs } from "./types"
 
+/**
+ * Generates the tool description for the terminal_kill tool
+ * @param args Tool arguments (currently unused but required for interface)
+ * @returns Formatted tool description string for terminal process management
+ */
 export function getTerminalKillDescription(args: ToolArgs): string | undefined {
 	return `## terminal_kill
 Description: Manage running processes in terminals.

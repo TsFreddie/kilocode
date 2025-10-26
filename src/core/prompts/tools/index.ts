@@ -37,7 +37,7 @@ import { CodeIndexManager } from "../../../services/code-index/manager"
 import { isFastApplyAvailable } from "../../tools/editFileTool"
 import { getEditFileDescription } from "./edit-file"
 import { type ClineProviderState } from "../../webview/ClineProvider"
-import { getTerminalKillDescription } from "./terminal-ctrl"
+import { getTerminalKillDescription } from "./terminal-kill"
 // kilocode_change end: Morph fast apply & terminal control
 
 // Map of tool names to their description functions
