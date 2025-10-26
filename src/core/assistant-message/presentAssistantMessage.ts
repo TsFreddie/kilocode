@@ -241,7 +241,7 @@ export async function presentAssistantMessage(cline: Task, recursionDepth: numbe
 					case "condense":
 						return `[${block.name}]`
 					case "terminal_kill":
-						return `[${block.name}']`
+						return `[${block.name}]`
 					// kilocode_change end: Add new tool cases
 					case "run_slash_command":
 						return `[${block.name} for '${block.params.command}'${block.params.args ? ` with args: ${block.params.args}` : ""}]`

@@ -17,7 +17,7 @@ export abstract class BaseTerminal implements RooTerminal {
 
 	public busy: boolean
 	public running: boolean
-	public killRequested: boolean
+	public killRequested: boolean // kilocode_change
 	protected streamClosed: boolean
 
 	public taskId?: string
@@ -75,7 +75,7 @@ export abstract class BaseTerminal implements RooTerminal {
 	public shellExecutionComplete(exitDetails: ExitCodeDetails) {
 		this.busy = false
 		this.running = false
-		this.killRequested = false
+		this.killRequested = false // kilocode_change
 
 		if (this.process) {
 			// Add to the front of the queue (most recent first).

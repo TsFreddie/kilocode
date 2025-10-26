@@ -118,7 +118,7 @@ export async function getEnvironmentDetails(cline: Task, includeFileDetails: boo
 
 		for (const busyTerminal of busyTerminals) {
 			const cwd = busyTerminal.getCurrentWorkingDirectory()
-			const status = busyTerminal.killRequested ? "Killing" : "Active"
+			const status = busyTerminal.killRequested ? "Killing" : "Active" // kilocode_change
 			terminalDetails += `\n## Terminal ${busyTerminal.id} (${status})`
 			terminalDetails += `\n### Working Directory: \`${cwd}\``
 			terminalDetails += `\n### Original command: \`${busyTerminal.getLastCommand()}\``

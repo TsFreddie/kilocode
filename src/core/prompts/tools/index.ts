@@ -66,11 +66,11 @@ const toolDescriptionMap: Record<string, (args: ToolArgs) => string | undefined>
 	new_task: (args) => getNewTaskDescription(args),
 	insert_content: (args) => getInsertContentDescription(args),
 	search_and_replace: (args) => getSearchAndReplaceDescription(args),
+	terminal_kill: (args) => getTerminalKillDescription(args), // kilocode_change: Used to control run_in_background commands
 	edit_file: () => getEditFileDescription(), // kilocode_change: Morph fast apply
 	apply_diff: (args) =>
 		args.diffStrategy ? args.diffStrategy.getToolDescription({ cwd: args.cwd, toolOptions: args.toolOptions }) : "",
 	update_todo_list: (args) => getUpdateTodoListDescription(args),
-	terminal_kill: (args) => getTerminalKillDescription(args), // kilocode_change
 	run_slash_command: () => getRunSlashCommandDescription(),
 	generate_image: (args) => getGenerateImageDescription(args),
 }
