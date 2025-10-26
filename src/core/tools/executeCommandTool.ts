@@ -230,7 +230,14 @@ export async function executeCommand(
 		},
 		onShellExecutionStarted: (pid: number | undefined, process: RooTerminalProcess) => {
 			console.log(`[executeCommand] onShellExecutionStarted: ${pid}`)
-			const status: CommandExecutionStatus = { executionId, status: "started", pid, command }
+			const status: CommandExecutionStatus = {
+				executionId,
+				status: "started",
+				pid,
+				command,
+				runInBackground,
+				terminalId: terminal.id,
+			}
 			provider?.postMessageToWebview({ type: "commandExecutionStatus", text: JSON.stringify(status) })
 
 			// kilocode_change start- automatically continue the process

@@ -463,6 +463,7 @@ export interface ClineSayTool {
 		| "generateImage"
 		| "imageGenerated"
 		| "runSlashCommand"
+		| "terminal_kill"
 	path?: string
 	diff?: string
 	content?: string
