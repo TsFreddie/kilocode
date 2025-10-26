@@ -146,19 +146,22 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 		this.terminal.setActiveStream(undefined)
 		this.emitRemainingBufferIfListening()
 		this.stopHotTimer()
+		this.removeAllListeners("line")
 		this.emit("completed", this.fullOutput)
 		this.emit("continue")
 		this.subprocess = undefined
 	}
 
 	public override continue() {
+		this.emitRemainingBufferIfListening() // kilocode_change
 		this.isListening = false
-		this.removeAllListeners("line")
+		// Don't remove listeners here - process continues in background
 		this.emit("continue")
 	}
 
 	public override abort() {
 		this.aborted = true
+		this.removeAllListeners("line")
 
 		// Function to perform the kill operations
 		const performKill = () => {

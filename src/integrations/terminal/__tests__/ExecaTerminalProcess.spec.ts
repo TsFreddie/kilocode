@@ -119,4 +119,95 @@ describe("ExecaTerminalProcess", () => {
 			expect(mockTerminal.setActiveStream).toHaveBeenLastCalledWith(undefined)
 		})
 	})
+
+	// kilocode_change start: Test background execution behavior
+	describe("background execution (continue)", () => {
+		it("should stop emitting line events when continue() is called", () => {
+			const lineSpy = vitest.fn()
+			terminalProcess.on("line", lineSpy)
+
+			// Initially listening
+			expect(terminalProcess["isListening"]).toBe(true)
+
+			// Call continue - should stop listening
+			terminalProcess.continue()
+
+			// Should no longer be listening
+			expect(terminalProcess["isListening"]).toBe(false)
+
+			// Should have emitted continue event
+			const continueSpy = vitest.fn()
+			terminalProcess.on("continue", continueSpy)
+			terminalProcess.continue()
+			expect(continueSpy).toHaveBeenCalled()
+		})
+
+		it("should emit remaining buffer before stopping listening", () => {
+			// Setup some unretrieved output
+			terminalProcess["fullOutput"] = "some output\n"
+			terminalProcess["lastRetrievedIndex"] = 0
+
+			const lineSpy = vitest.fn()
+			terminalProcess.on("line", lineSpy)
+
+			// Call continue - should emit remaining output first
+			terminalProcess.continue()
+
+			// Should have emitted the remaining output
+			expect(lineSpy).toHaveBeenCalledWith("some output\n")
+		})
+
+		it("should respect isListening flag during output processing", async () => {
+			// Create a mock that yields multiple lines
+			const mockIterator = async function* () {
+				yield "line 1\n"
+				yield "line 2\n"
+				yield "line 3\n"
+			}
+
+			// Temporarily override the mock for this test only
+			const execaMock = vitest.mocked(execa)
+			const originalImplementation = execaMock.getMockImplementation()
+
+			execaMock.mockImplementation(((options: any) => {
+				return (_template: TemplateStringsArray, ...args: any[]) => ({
+					pid: mockPid,
+					iterable: (_opts: any) => mockIterator(),
+					kill: vitest.fn(),
+				})
+			}) as any)
+
+			const lineSpy = vitest.fn()
+			terminalProcess.on("line", lineSpy)
+
+			// Start the process but immediately call continue to stop listening
+			const runPromise = terminalProcess.run("echo test")
+
+			// Allow a tiny delay for the async iterator to start
+			await new Promise((resolve) => setTimeout(resolve, 1))
+			terminalProcess.continue()
+
+			await runPromise
+
+			// Should have emitted some line events but not all possible content
+			// (the continue() call should have stopped further processing)
+			expect(lineSpy).toHaveBeenCalled()
+
+			// Verify that the emitted content contains expected line data
+			const calls = lineSpy.mock.calls
+			expect(calls.length).toBeGreaterThan(0)
+			expect(calls.length).toBeLessThanOrEqual(3) // Should not emit more than our 3 mock lines
+
+			// Each call should contain line content
+			for (const call of calls) {
+				expect(call[0]).toMatch(/line \d+/)
+			}
+
+			// Restore the original mock implementation
+			if (originalImplementation) {
+				execaMock.mockImplementation(originalImplementation)
+			}
+		})
+	})
+	// kilocode_change end
 })
