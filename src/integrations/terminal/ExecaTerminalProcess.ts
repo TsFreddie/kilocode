@@ -35,16 +35,12 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 	public override async run(command: string) {
 		this.command = command
 
-		console.log(`🚀 [ExecaTerminalProcess] Terminal ${this.terminal.id} starting command: ${command}`)
-
 		try {
 			this.isHot = true
 
 			// Mark terminal as busy immediately
 			this.terminal.busy = true
-			console.log(`🚀 [ExecaTerminalProcess] Terminal ${this.terminal.id} marked as busy`)
 
-			console.log(`🚀 [ExecaTerminalProcess] Creating detached subprocess for: ${command}`)
 			this.subprocess = execa({
 				shell: true,
 				cwd: this.terminal.getCurrentWorkingDirectory(),
@@ -61,13 +57,10 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 			})`${command}`
 
 			this.pid = this.subprocess.pid
-			console.log(`🚀 [ExecaTerminalProcess] Detached subprocess created with PID: ${this.pid}`)
 
 			// Emit shell_execution_started immediately after subprocess creation
 			try {
-				console.log(`🚀 [ExecaTerminalProcess] About to emit shell_execution_started with PID: ${this.pid}`)
 				this.emit("shell_execution_started", this.pid)
-				console.log(`🚀 [ExecaTerminalProcess] Emitted shell_execution_started successfully`)
 			} catch (error) {
 				console.error(`🚀 [ExecaTerminalProcess] Error during shell_execution_started emit:`, error)
 				throw error
@@ -106,19 +99,14 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 			})()
 
 			// Start monitoring the stream immediately and synchronously
-			console.log(`🚀 [ExecaTerminalProcess] Starting immediate stream monitoring`)
-
 			// Set active stream for terminal integration
 			this.terminal.setActiveStream(stream, this.pid)
-			console.log(`🚀 [ExecaTerminalProcess] Terminal ${this.terminal.id} set active stream`)
 
 			// Start immediate stream processing in background (don't await to avoid blocking)
 			this.startBackgroundStreamMonitoring(stream)
 
 			// Emit continue immediately after starting monitoring
-			console.log(`🚀 [ExecaTerminalProcess] About to emit continue event`)
 			this.emit("continue") // Signal run() completion for background execution
-			console.log(`🚀 [ExecaTerminalProcess] Emitted continue event - run() method complete`)
 		} catch (error) {
 			console.error(
 				`🚀 [ExecaTerminalProcess] startup error: ${error instanceof Error ? error.message : String(error)}`,
@@ -244,11 +232,8 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 	}
 
 	private async startBackgroundStreamMonitoring(stream: AsyncIterable<string>) {
-		console.log(`🚀 [ExecaTerminalProcess] Terminal ${this.terminal.id} starting background stream monitoring`)
-
 		// Set active stream for terminal integration
 		this.terminal.setActiveStream(stream, this.pid)
-		console.log(`🚀 [ExecaTerminalProcess] Terminal ${this.terminal.id} set active stream`)
 
 		try {
 			let streamLineCount = 0
@@ -256,7 +241,6 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 
 			for await (const line of stream) {
 				streamLineCount++
-				console.log(`🚀 [ExecaTerminalProcess] Terminal ${this.terminal.id} received line ${streamLineCount}`)
 
 				if (streamLineCount <= 3) {
 					// Only log first few lines to avoid spam
@@ -266,7 +250,6 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 				}
 
 				if (this.aborted) {
-					console.log(`🚀 [ExecaTerminalProcess] Background monitoring aborted`)
 					break
 				}
 
@@ -275,7 +258,6 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 
 				// Emit line events for listeners (like tests)
 				if (!hasEmittedFirstLine) {
-					console.log(`🚀 [ExecaTerminalProcess] About to emit first line event`)
 					hasEmittedFirstLine = true
 				}
 
@@ -302,10 +284,7 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 			if (!this.aborted && this.subprocess) {
 				try {
 					const result = await this.subprocess
-					console.log(`🚀 [ExecaTerminalProcess] Background subprocess completed: ${result.exitCode}`)
-					console.log(`🚀 [ExecaTerminalProcess] About to emit shell_execution_complete`)
 					this.emit("shell_execution_complete", { exitCode: result.exitCode ?? 0 })
-					console.log(`🚀 [ExecaTerminalProcess] Emitted shell_execution_complete`)
 				} catch (error) {
 					if (error instanceof ExecaError) {
 						console.error(`🚀 [ExecaTerminalProcess] background subprocess error: ${error.message}`)
@@ -321,14 +300,11 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 					}
 				}
 			} else if (this.aborted) {
-				console.log(`🚀 [ExecaTerminalProcess] Handling aborted subprocess cleanup`)
 				// Handle aborted subprocess cleanup
 				if (this.subprocess) {
 					let timeoutId: NodeJS.Timeout | undefined
 
 					const kill = new Promise<void>((resolve) => {
-						console.log(`🚀 [ExecaTerminalProcess] SIGKILL -> ${this.pid}`)
-
 						timeoutId = setTimeout(() => {
 							try {
 								this.subprocess?.kill("SIGKILL")
@@ -363,7 +339,6 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 				this.emit("shell_execution_complete", { exitCode: 1 })
 			}
 		} finally {
-			console.log(`🚀 [ExecaTerminalProcess] Terminal ${this.terminal.id} performing final cleanup`)
 			// Final cleanup when subprocess actually completes
 			this.performFinalCleanup()
 		}

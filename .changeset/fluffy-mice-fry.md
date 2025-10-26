@@ -2,4 +2,4 @@
 "kilo-code": minor
 ---
 
-Allow the agent to execute terminal commands in the background and manage long-running processes
+Add background command execution with run_in_background parameter and terminal_kill tool for managing long-running processes
