@@ -35,9 +35,12 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 	public override async run(command: string) {
 		this.command = command
 
+		console.log(`🚀 [ExecaTerminalProcess] Starting command: ${command}`)
+
 		try {
 			this.isHot = true
 
+			console.log(`🚀 [ExecaTerminalProcess] Creating subprocess for: ${command}`)
 			this.subprocess = execa({
 				shell: true,
 				cwd: this.terminal.getCurrentWorkingDirectory(),
@@ -52,6 +55,10 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 			})`${command}`
 
 			this.pid = this.subprocess.pid
+			console.log(`🚀 [ExecaTerminalProcess] Subprocess created with PID: ${this.pid} for: ${command}`)
+
+			// Emit shell_execution_started to trigger background execution logic
+			this.emit("shell_execution_started", this.pid)
 
 			// When using shell: true, the PID is for the shell, not the actual command
 			// Find the actual command PID after a small delay
@@ -83,8 +90,18 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 
 			this.terminal.setActiveStream(stream, this.pid)
 
+			console.log(`🚀 [ExecaTerminalProcess] About to start stream iteration for: ${this.command}`)
+			let streamLineCount = 0
 			for await (const line of stream) {
+				streamLineCount++
+				if (streamLineCount <= 3) {
+					// Only log first few lines to avoid spam
+					console.log(`🚀 [ExecaTerminalProcess] Stream line ${streamLineCount}: ${line.slice(0, 100)}...`)
+				}
 				if (this.aborted) {
+					console.log(
+						`🚀 [ExecaTerminalProcess] Stream loop breaking - aborted: ${this.aborted}, command: ${this.command}`,
+					)
 					break
 				}
 
@@ -99,6 +116,8 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 
 				this.startHotTimer(line)
 			}
+
+			console.log(`🚀 [ExecaTerminalProcess] Stream loop ended for: ${this.command}`)
 
 			if (this.aborted) {
 				let timeoutId: NodeJS.Timeout | undefined
@@ -143,19 +162,18 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 			this.subprocess = undefined
 		}
 
-		this.terminal.setActiveStream(undefined)
-		this.emitRemainingBufferIfListening()
-		this.stopHotTimer()
-		this.removeAllListeners("line")
+		// Always perform cleanup and emit completion - let background monitoring handle long-running processes
+		console.log(`🚀 [ExecaTerminalProcess] Command stream ended, cleaning up: ${this.command}`)
+		this.performCleanup()
 		this.emit("completed", this.fullOutput)
-		this.emit("continue")
-		this.subprocess = undefined
+		this.emit("continue") // Signal that run() is complete (maintains compatibility)
 	}
 
 	public override continue() {
-		this.emitRemainingBufferIfListening() // kilocode_change
+		console.log(`🚀 [ExecaTerminalProcess] continue() called - stopping output listening: ${this.command}`)
+		this.emitRemainingBufferIfListening() // Emit any remaining output first
 		this.isListening = false
-		// Don't remove listeners here - process continues in background
+		this.removeAllListeners("line")
 		this.emit("continue")
 	}
 
@@ -219,6 +237,9 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 				}
 			})
 		}
+
+		// Perform cleanup immediately for aborted processes
+		this.performCleanup()
 	}
 
 	public override hasUnretrievedOutput() {
@@ -254,5 +275,13 @@ export class ExecaTerminalProcess extends BaseTerminalProcess {
 		if (output !== "") {
 			this.emit("line", output)
 		}
+	}
+
+	private performCleanup() {
+		console.log(`🚀 [ExecaTerminalProcess] Performing cleanup: ${this.command}`)
+		this.terminal.setActiveStream(undefined)
+		this.stopHotTimer()
+		this.removeAllListeners("line")
+		this.subprocess = undefined
 	}
 }
