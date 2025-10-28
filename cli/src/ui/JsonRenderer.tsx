@@ -14,16 +14,13 @@ interface JsonRendererProps {
 }
 
 /**
- * Check if a message is complete (not partial)
+ * Create a unique key for a message to track if it has changed
  */
-function isMessageComplete(message: UnifiedMessage): boolean {
-	if (message.source === "cli") {
-		// CLI messages are complete if partial is not true
-		return message.message.partial !== true
-	} else {
-		// Extension messages are complete if partial is not true
-		return message.message.partial !== true
-	}
+function getMessageKey(message: UnifiedMessage): string {
+	const baseKey = `${message.source}-${message.message.ts}`
+	const content = message.source === "cli" ? message.message.content : message.message.text || ""
+	const partial = message.message.partial ? "partial" : "complete"
+	return `${baseKey}-${content.length}-${partial}`
 }
 
 /**
@@ -34,48 +31,41 @@ function isMessageComplete(message: UnifiedMessage): boolean {
  * instead of the interactive terminal UI.
  *
  * Key behaviors:
- * - Only outputs complete (non-partial) messages
- * - Waits for a message to be complete before outputting it
- * - If a new message arrives, outputs any previous partial messages that are now complete
- * - Tracks which messages have been output to avoid duplicates
+ * - Outputs every message update, including partial messages
+ * - When a partial message is updated, outputs a new JSON line with the updated content
+ * - When a message becomes complete (partial: false), outputs the final version
+ * - This allows consumers to build streaming UIs that show real-time updates
  * - Does not render any visual components (returns null)
+ *
+ * Example output stream:
+ * {"timestamp":123,"source":"extension","type":"say","content":"Hello","metadata":{"partial":true}}
+ * {"timestamp":123,"source":"extension","type":"say","content":"Hello world","metadata":{"partial":true}}
+ * {"timestamp":123,"source":"extension","type":"say","content":"Hello world!","metadata":{"partial":false}}
  */
 export const JsonRenderer: React.FC<JsonRendererProps> = ({ onComplete }) => {
 	const messages = useAtomValue(mergedMessagesAtom)
-	const outputCountRef = useRef(0)
+	const lastOutputKeysRef = useRef<string[]>([])
 
 	useEffect(() => {
-		// Determine how many messages we can output
-		// We can output all complete messages, plus any partial messages that have been superseded
-		let outputUpTo = outputCountRef.current
+		// Build current message keys
+		const currentKeys = messages.map(getMessageKey)
 
-		for (let i = outputCountRef.current; i < messages.length; i++) {
+		// Output messages that have changed or are new
+		for (let i = 0; i < messages.length; i++) {
 			const message = messages[i]
-			if (!message) continue
+			const currentKey = currentKeys[i]
+			const lastKey = lastOutputKeysRef.current[i]
 
-			const isComplete = isMessageComplete(message)
-			const isLastMessage = i === messages.length - 1
+			if (!message || !currentKey) continue
 
-			if (isComplete) {
-				// Complete message - can output
-				outputUpTo = i + 1
-			} else if (!isLastMessage) {
-				// Partial message but not the last one - a newer message exists, so output this one
-				outputUpTo = i + 1
-			}
-			// If it's partial AND the last message, don't output it yet
-		}
-
-		// Output messages from outputCountRef.current to outputUpTo
-		for (let i = outputCountRef.current; i < outputUpTo; i++) {
-			const message = messages[i]
-			if (message) {
+			// Output if this is a new message or if the message has changed
+			if (currentKey !== lastKey) {
 				outputJsonMessage(message)
 			}
 		}
 
-		// Update the count of output messages
-		outputCountRef.current = outputUpTo
+		// Update the reference to current keys
+		lastOutputKeysRef.current = currentKeys
 
 		// Note: We don't call onComplete here because we want to let
 		// the CI mode hook handle exit timing based on completion detection
