@@ -83,44 +83,56 @@ export async function simpleReadFileTool(
 			return
 		}
 
-		// Get max read file line setting
-		const { maxReadFileLine = -1 } = (await cline.providerRef.deref()?.getState()) ?? {}
+		// Get state and check for YOLO mode
+		const state = await cline.providerRef.deref()?.getState()
+		const { maxReadFileLine = -1 } = state ?? {}
+		const isYoloMode = state?.yoloMode ?? false
 
-		// Create approval message
-		const isOutsideWorkspace = isPathOutsideWorkspace(fullPath)
-		let lineSnippet = ""
-		if (maxReadFileLine === 0) {
-			lineSnippet = t("tools:readFile.definitionsOnly")
-		} else if (maxReadFileLine > 0) {
-			lineSnippet = t("tools:readFile.maxLines", { max: maxReadFileLine })
-		}
+		// Declare variables for feedback tracking
+		let text: string | undefined
+		let images: string[] | undefined
 
-		const completeMessage = JSON.stringify({
-			tool: "readFile",
-			path: getReadablePath(cline.cwd, relPath),
-			isOutsideWorkspace,
-			content: fullPath,
-			reason: lineSnippet,
-		} satisfies ClineSayTool)
+		// YOLO mode: skip approval and proceed directly to processing
+		if (!isYoloMode) {
+			// Create approval message
+			const isOutsideWorkspace = isPathOutsideWorkspace(fullPath)
+			let lineSnippet = ""
+			if (maxReadFileLine === 0) {
+				lineSnippet = t("tools:readFile.definitionsOnly")
+			} else if (maxReadFileLine > 0) {
+				lineSnippet = t("tools:readFile.maxLines", { max: maxReadFileLine })
+			}
 
-		const { response, text, images } = await cline.ask("tool", completeMessage, false)
+			const completeMessage = JSON.stringify({
+				tool: "readFile",
+				path: getReadablePath(cline.cwd, relPath),
+				isOutsideWorkspace,
+				content: fullPath,
+				reason: lineSnippet,
+			} satisfies ClineSayTool)
 
-		if (response !== "yesButtonClicked") {
-			// Handle denial
+			const response_data = await cline.ask("tool", completeMessage, false)
+			const response = response_data.response
+			text = response_data.text
+			images = response_data.images
+
+			if (response !== "yesButtonClicked") {
+				// Handle denial
+				if (text) {
+					await cline.say("user_feedback", text, images)
+				}
+				cline.didRejectTool = true
+
+				const statusMessage = text ? formatResponse.toolDeniedWithFeedback(text) : formatResponse.toolDenied()
+
+				pushToolResult(`${statusMessage}\n<file><path>${relPath}</path><status>Denied by user</status></file>`)
+				return
+			}
+
+			// Handle approval with feedback
 			if (text) {
 				await cline.say("user_feedback", text, images)
 			}
-			cline.didRejectTool = true
-
-			const statusMessage = text ? formatResponse.toolDeniedWithFeedback(text) : formatResponse.toolDenied()
-
-			pushToolResult(`${statusMessage}\n<file><path>${relPath}</path><status>Denied by user</status></file>`)
-			return
-		}
-
-		// Handle approval with feedback
-		if (text) {
-			await cline.say("user_feedback", text, images)
 		}
 
 		// Process the file

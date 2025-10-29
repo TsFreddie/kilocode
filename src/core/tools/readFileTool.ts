@@ -276,17 +276,145 @@ export async function readFileTool(
 			}
 		}
 
+		// Check for YOLO mode before handling approvals
+		const state = await cline.providerRef.deref()?.getState()
+		const isYoloMode = state?.yoloMode ?? false
+
 		// Handle batch approval if there are multiple files to approve
 		if (filesToApprove.length > 1) {
-			const { maxReadFileLine = -1 } = (await cline.providerRef.deref()?.getState()) ?? {}
+			const { maxReadFileLine = -1 } = state ?? {}
 
-			// Prepare batch file data
-			const batchFiles = filesToApprove.map((fileResult) => {
-				const relPath = fileResult.path
-				const fullPath = path.resolve(cline.cwd, relPath)
-				const isOutsideWorkspace = isPathOutsideWorkspace(fullPath)
+			// YOLO mode: auto-approve all files without asking
+			if (isYoloMode) {
+				filesToApprove.forEach((fileResult) => {
+					updateFileResult(fileResult.path, {
+						status: "approved",
+					})
+				})
+			} else {
+				// Prepare batch file data
+				const batchFiles = filesToApprove.map((fileResult) => {
+					const relPath = fileResult.path
+					const fullPath = path.resolve(cline.cwd, relPath)
+					const isOutsideWorkspace = isPathOutsideWorkspace(fullPath)
 
-				// Create line snippet for this file
+					// Create line snippet for this file
+					let lineSnippet = ""
+					if (fileResult.lineRanges && fileResult.lineRanges.length > 0) {
+						const ranges = fileResult.lineRanges.map((range) =>
+							t("tools:readFile.linesRange", { start: range.start, end: range.end }),
+						)
+						lineSnippet = ranges.join(", ")
+					} else if (maxReadFileLine === 0) {
+						lineSnippet = t("tools:readFile.definitionsOnly")
+					} else if (maxReadFileLine > 0) {
+						lineSnippet = t("tools:readFile.maxLines", { max: maxReadFileLine })
+					}
+
+					const readablePath = getReadablePath(cline.cwd, relPath)
+					const key = `${readablePath}${lineSnippet ? ` (${lineSnippet})` : ""}`
+
+					return {
+						path: readablePath,
+						lineSnippet,
+						isOutsideWorkspace,
+						key,
+						content: fullPath, // Include full path for content
+					}
+				})
+
+				const completeMessage = JSON.stringify({
+					tool: "readFile",
+					batchFiles,
+				} satisfies ClineSayTool)
+
+				const { response, text, images } = await cline.ask("tool", completeMessage, false)
+
+				// Process batch response
+				if (response === "yesButtonClicked") {
+					// Approve all files
+					if (text) {
+						await cline.say("user_feedback", text, images)
+					}
+					filesToApprove.forEach((fileResult) => {
+						updateFileResult(fileResult.path, {
+							status: "approved",
+							feedbackText: text,
+							feedbackImages: images,
+						})
+					})
+				} else if (response === "noButtonClicked") {
+					// Deny all files
+					if (text) {
+						await cline.say("user_feedback", text, images)
+					}
+					cline.didRejectTool = true
+					filesToApprove.forEach((fileResult) => {
+						updateFileResult(fileResult.path, {
+							status: "denied",
+							xmlContent: `<file><path>${fileResult.path}</path><status>Denied by user</status></file>`,
+							feedbackText: text,
+							feedbackImages: images,
+						})
+					})
+				} else {
+					// Handle individual permissions from objectResponse
+					// if (text) {
+					// 	await cline.say("user_feedback", text, images)
+					// }
+
+					try {
+						const individualPermissions = JSON.parse(text || "{}")
+						let hasAnyDenial = false
+
+						batchFiles.forEach((batchFile, index) => {
+							const fileResult = filesToApprove[index]
+							const approved = individualPermissions[batchFile.key] === true
+
+							if (approved) {
+								updateFileResult(fileResult.path, {
+									status: "approved",
+								})
+							} else {
+								hasAnyDenial = true
+								updateFileResult(fileResult.path, {
+									status: "denied",
+									xmlContent: `<file><path>${fileResult.path}</path><status>Denied by user</status></file>`,
+								})
+							}
+						})
+
+						if (hasAnyDenial) {
+							cline.didRejectTool = true
+						}
+					} catch (error) {
+						// Fallback: if JSON parsing fails, deny all files
+						console.error("Failed to parse individual permissions:", error)
+						cline.didRejectTool = true
+						filesToApprove.forEach((fileResult) => {
+							updateFileResult(fileResult.path, {
+								status: "denied",
+								xmlContent: `<file><path>${fileResult.path}</path><status>Denied by user</status></file>`,
+							})
+						})
+					}
+				}
+			}
+		} else if (filesToApprove.length === 1) {
+			// Handle single file approval (existing logic)
+			const fileResult = filesToApprove[0]
+			const relPath = fileResult.path
+			const fullPath = path.resolve(cline.cwd, relPath)
+			const isOutsideWorkspace = isPathOutsideWorkspace(fullPath)
+			const { maxReadFileLine = -1 } = state ?? {}
+
+			// YOLO mode: auto-approve without asking
+			if (isYoloMode) {
+				updateFileResult(relPath, {
+					status: "approved",
+				})
+			} else {
+				// Create line snippet for approval message
 				let lineSnippet = ""
 				if (fileResult.lineRanges && fileResult.lineRanges.length > 0) {
 					const ranges = fileResult.lineRanges.map((range) =>
@@ -299,155 +427,47 @@ export async function readFileTool(
 					lineSnippet = t("tools:readFile.maxLines", { max: maxReadFileLine })
 				}
 
-				const readablePath = getReadablePath(cline.cwd, relPath)
-				const key = `${readablePath}${lineSnippet ? ` (${lineSnippet})` : ""}`
-
-				return {
-					path: readablePath,
-					lineSnippet,
+				const completeMessage = JSON.stringify({
+					tool: "readFile",
+					path: getReadablePath(cline.cwd, relPath),
 					isOutsideWorkspace,
-					key,
-					content: fullPath, // Include full path for content
-				}
-			})
+					content: fullPath,
+					reason: lineSnippet,
+				} satisfies ClineSayTool)
 
-			const completeMessage = JSON.stringify({
-				tool: "readFile",
-				batchFiles,
-			} satisfies ClineSayTool)
+				const { response, text, images } = await cline.ask("tool", completeMessage, false)
 
-			const { response, text, images } = await cline.ask("tool", completeMessage, false)
+				if (response !== "yesButtonClicked") {
+					// Handle both messageResponse and noButtonClicked with text
+					if (text) {
+						await cline.say("user_feedback", text, images)
+					}
+					cline.didRejectTool = true
 
-			// Process batch response
-			if (response === "yesButtonClicked") {
-				// Approve all files
-				if (text) {
-					await cline.say("user_feedback", text, images)
-				}
-				filesToApprove.forEach((fileResult) => {
-					updateFileResult(fileResult.path, {
+					updateFileResult(relPath, {
+						status: "denied",
+						xmlContent: `<file><path>${relPath}</path><status>Denied by user</status></file>`,
+						feedbackText: text,
+						feedbackImages: images,
+					})
+				} else {
+					// Handle yesButtonClicked with text
+					if (text) {
+						await cline.say("user_feedback", text, images)
+					}
+
+					updateFileResult(relPath, {
 						status: "approved",
 						feedbackText: text,
 						feedbackImages: images,
 					})
-				})
-			} else if (response === "noButtonClicked") {
-				// Deny all files
-				if (text) {
-					await cline.say("user_feedback", text, images)
 				}
-				cline.didRejectTool = true
-				filesToApprove.forEach((fileResult) => {
-					updateFileResult(fileResult.path, {
-						status: "denied",
-						xmlContent: `<file><path>${fileResult.path}</path><status>Denied by user</status></file>`,
-						feedbackText: text,
-						feedbackImages: images,
-					})
-				})
-			} else {
-				// Handle individual permissions from objectResponse
-				// if (text) {
-				// 	await cline.say("user_feedback", text, images)
-				// }
-
-				try {
-					const individualPermissions = JSON.parse(text || "{}")
-					let hasAnyDenial = false
-
-					batchFiles.forEach((batchFile, index) => {
-						const fileResult = filesToApprove[index]
-						const approved = individualPermissions[batchFile.key] === true
-
-						if (approved) {
-							updateFileResult(fileResult.path, {
-								status: "approved",
-							})
-						} else {
-							hasAnyDenial = true
-							updateFileResult(fileResult.path, {
-								status: "denied",
-								xmlContent: `<file><path>${fileResult.path}</path><status>Denied by user</status></file>`,
-							})
-						}
-					})
-
-					if (hasAnyDenial) {
-						cline.didRejectTool = true
-					}
-				} catch (error) {
-					// Fallback: if JSON parsing fails, deny all files
-					console.error("Failed to parse individual permissions:", error)
-					cline.didRejectTool = true
-					filesToApprove.forEach((fileResult) => {
-						updateFileResult(fileResult.path, {
-							status: "denied",
-							xmlContent: `<file><path>${fileResult.path}</path><status>Denied by user</status></file>`,
-						})
-					})
-				}
-			}
-		} else if (filesToApprove.length === 1) {
-			// Handle single file approval (existing logic)
-			const fileResult = filesToApprove[0]
-			const relPath = fileResult.path
-			const fullPath = path.resolve(cline.cwd, relPath)
-			const isOutsideWorkspace = isPathOutsideWorkspace(fullPath)
-			const { maxReadFileLine = -1 } = (await cline.providerRef.deref()?.getState()) ?? {}
-
-			// Create line snippet for approval message
-			let lineSnippet = ""
-			if (fileResult.lineRanges && fileResult.lineRanges.length > 0) {
-				const ranges = fileResult.lineRanges.map((range) =>
-					t("tools:readFile.linesRange", { start: range.start, end: range.end }),
-				)
-				lineSnippet = ranges.join(", ")
-			} else if (maxReadFileLine === 0) {
-				lineSnippet = t("tools:readFile.definitionsOnly")
-			} else if (maxReadFileLine > 0) {
-				lineSnippet = t("tools:readFile.maxLines", { max: maxReadFileLine })
-			}
-
-			const completeMessage = JSON.stringify({
-				tool: "readFile",
-				path: getReadablePath(cline.cwd, relPath),
-				isOutsideWorkspace,
-				content: fullPath,
-				reason: lineSnippet,
-			} satisfies ClineSayTool)
-
-			const { response, text, images } = await cline.ask("tool", completeMessage, false)
-
-			if (response !== "yesButtonClicked") {
-				// Handle both messageResponse and noButtonClicked with text
-				if (text) {
-					await cline.say("user_feedback", text, images)
-				}
-				cline.didRejectTool = true
-
-				updateFileResult(relPath, {
-					status: "denied",
-					xmlContent: `<file><path>${relPath}</path><status>Denied by user</status></file>`,
-					feedbackText: text,
-					feedbackImages: images,
-				})
-			} else {
-				// Handle yesButtonClicked with text
-				if (text) {
-					await cline.say("user_feedback", text, images)
-				}
-
-				updateFileResult(relPath, {
-					status: "approved",
-					feedbackText: text,
-					feedbackImages: images,
-				})
 			}
 		}
 
 		// Track total image memory usage across all files
 		const imageMemoryTracker = new ImageMemoryTracker()
-		const state = await cline.providerRef.deref()?.getState()
+		// Reuse state from above - already declared at line 280
 		const {
 			maxReadFileLine = -1,
 			maxImageFileSize = DEFAULT_MAX_IMAGE_FILE_SIZE_MB,
